@@ -452,6 +452,64 @@
       backdrop-filter: blur(6px);
     }
 
+    .gmail-box {
+      padding: 1.35rem;
+    }
+
+    .gmail-desc {
+      margin: 0 0 1rem;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .gmail-config {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .gmail-status {
+      margin: 0 0 1rem;
+      padding: 0.75rem 0.9rem;
+      border-radius: var(--radius-sm);
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+
+    .gmail-status.is-connected {
+      color: #047857;
+      background: var(--success-soft);
+      border-color: #a7f3d0;
+    }
+
+    .gmail-status.is-active {
+      color: #4338ca;
+      background: var(--primary-soft);
+      border-color: #c7d2fe;
+    }
+
+    .btn-gmail {
+      background: #ea4335;
+      box-shadow: 0 4px 12px rgba(234, 67, 53, 0.2);
+    }
+
+    .btn-gmail:hover {
+      background: #d93025;
+    }
+
+    .btn-muted {
+      background: #64748b;
+      box-shadow: none;
+    }
+
+    .btn-muted:hover {
+      background: #475569;
+    }
+
     .empty-row td {
       text-align: center;
       color: var(--text-muted);
@@ -499,8 +557,13 @@
         flex: 1;
         min-width: calc(50% - 0.3rem);
       }
+
+      .gmail-config {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <div class="app">
@@ -533,6 +596,30 @@
         <button type="button" class="btn-import" id="import-btn">CSV 업로드</button>
         <input type="file" id="import-file" accept=".csv,text/csv">
         <button type="button" class="btn-export" id="export-btn">CSV보내기</button>
+      </div>
+    </div>
+
+    <div class="panel gmail-box">
+      <h2 class="section-title">Gmail 주문 알림</h2>
+      <p class="gmail-desc">
+        제목에 <strong>주문</strong> 또는 <strong>주문서</strong>가 포함된 메일이 오면 브라우저 알림을 보냅니다.
+        앱 탭이 열려 있을 때만 동작합니다.
+      </p>
+      <div class="gmail-config">
+        <div>
+          <label for="gmail-client-id">Google Client ID</label>
+          <input type="text" id="gmail-client-id" placeholder="123456789-xxxx.apps.googleusercontent.com">
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button type="button" class="btn-muted" id="gmail-save-client-btn">ID 저장</button>
+        </div>
+      </div>
+      <p class="gmail-status" id="gmail-status">Client ID를 입력하고 Gmail을 연결해 주세요.</p>
+      <div class="toolbar-actions">
+        <button type="button" class="btn-gmail" id="gmail-connect-btn">Gmail 연결</button>
+        <button type="button" id="gmail-notify-btn" disabled>알림 켜기</button>
+        <button type="button" class="btn-muted" id="gmail-disconnect-btn" disabled>연결 해제</button>
       </div>
     </div>
 
@@ -586,7 +673,8 @@
 
     <p class="note">
       ※ 양식 다운로드 후 엑셀에서 작성하고 CSV로 저장해 업로드하세요<br>
-      ※ CSV 업로드는 기존 상품에 추가됩니다 &nbsp;|&nbsp; 데이터는 이 브라우저에 저장됩니다
+      ※ CSV 업로드는 기존 상품에 추가됩니다 &nbsp;|&nbsp; 데이터는 이 브라우저에 저장됩니다<br>
+      ※ Gmail 알림은 앱 탭이 열려 있을 때 3분마다 확인합니다
     </p>
   </div>
 
@@ -607,6 +695,24 @@
     const totalBuyEl = document.getElementById("total-buy");
     const totalSellEl = document.getElementById("total-sell");
     const totalProfitEl = document.getElementById("total-profit");
+    const gmailClientIdInput = document.getElementById("gmail-client-id");
+    const gmailStatusEl = document.getElementById("gmail-status");
+    const gmailSaveClientBtn = document.getElementById("gmail-save-client-btn");
+    const gmailConnectBtn = document.getElementById("gmail-connect-btn");
+    const gmailNotifyBtn = document.getElementById("gmail-notify-btn");
+    const gmailDisconnectBtn = document.getElementById("gmail-disconnect-btn");
+
+    const GMAIL_CLIENT_ID_KEY = "gmail-client-id";
+    const GMAIL_SEEN_KEY = "gmail-seen-message-ids";
+    const GMAIL_NOTIFY_KEY = "gmail-notify-enabled";
+    const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+    const GMAIL_QUERY = "subject:(주문 OR 주문서) newer_than:7d";
+    const GMAIL_POLL_MS = 3 * 60 * 1000;
+
+    let gmailAccessToken = "";
+    let gmailPollTimer = null;
+    let gmailTokenClient = null;
+    let gmailNotifyEnabled = false;
 
     function formatPrice(price) {
       return price.toLocaleString("ko-KR") + "원";
@@ -667,6 +773,256 @@
       setTimeout(function () {
         message.textContent = "";
       }, duration || 2000);
+    }
+
+    function updateGmailStatus(text, state) {
+      gmailStatusEl.textContent = text;
+      gmailStatusEl.className = "gmail-status";
+      if (state) {
+        gmailStatusEl.classList.add(state);
+      }
+    }
+
+    function getGmailClientId() {
+      return gmailClientIdInput.value.trim();
+    }
+
+    function saveGmailClientId() {
+      const clientId = getGmailClientId();
+
+      if (!clientId) {
+        showMessage("Client ID를 입력해 주세요.");
+        return;
+      }
+
+      localStorage.setItem(GMAIL_CLIENT_ID_KEY, clientId);
+      showMessage("Client ID를 저장했습니다.");
+      waitForGoogleApi(initGmailAuth);
+    }
+
+    function loadGmailClientId() {
+      const saved = localStorage.getItem(GMAIL_CLIENT_ID_KEY);
+      if (saved) {
+        gmailClientIdInput.value = saved;
+      }
+    }
+
+    function waitForGoogleApi(callback) {
+      if (window.google && google.accounts && google.accounts.oauth2) {
+        callback();
+        return;
+      }
+
+      setTimeout(function () {
+        waitForGoogleApi(callback);
+      }, 100);
+    }
+
+    function initGmailAuth() {
+      const clientId = getGmailClientId();
+
+      if (!clientId || !window.google || !google.accounts || !google.accounts.oauth2) {
+        return false;
+      }
+
+      gmailTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: GMAIL_SCOPE,
+        callback: function (response) {
+          if (response.error) {
+            updateGmailStatus("Gmail 연결 실패: " + response.error);
+            showMessage("Gmail 연결에 실패했습니다.");
+            return;
+          }
+
+          gmailAccessToken = response.access_token;
+          gmailNotifyBtn.disabled = false;
+          gmailDisconnectBtn.disabled = false;
+          updateGmailStatus("Gmail 연결됨. 알림 켜기를 눌러 주세요.", "is-connected");
+
+          if (gmailNotifyEnabled) {
+            startGmailNotification();
+          }
+        }
+      });
+
+      return true;
+    }
+
+    function connectGmail() {
+      const clientId = getGmailClientId();
+
+      if (!clientId) {
+        showMessage("먼저 Client ID를 입력하고 저장해 주세요.");
+        return;
+      }
+
+      localStorage.setItem(GMAIL_CLIENT_ID_KEY, clientId);
+
+      waitForGoogleApi(function () {
+        if (!initGmailAuth()) {
+          showMessage("Google 로그인을 불러오지 못했습니다.");
+          return;
+        }
+
+        gmailTokenClient.requestAccessToken({ prompt: "consent" });
+      });
+    }
+
+    function getSeenMessageIds() {
+      const saved = localStorage.getItem(GMAIL_SEEN_KEY);
+      return saved ? JSON.parse(saved) : [];
+    }
+
+    function saveSeenMessageIds(ids) {
+      localStorage.setItem(GMAIL_SEEN_KEY, JSON.stringify(ids));
+    }
+
+    async function gmailApiFetch(url) {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: "Bearer " + gmailAccessToken
+        }
+      });
+
+      if (response.status === 401) {
+        throw new Error("TOKEN_EXPIRED");
+      }
+
+      if (!response.ok) {
+        throw new Error("Gmail API 오류");
+      }
+
+      return response.json();
+    }
+
+    async function fetchOrderEmails() {
+      const url =
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages" +
+        "?q=" + encodeURIComponent(GMAIL_QUERY) +
+        "&maxResults=10";
+
+      const data = await gmailApiFetch(url);
+      return data.messages || [];
+    }
+
+    async function fetchEmailSubject(messageId) {
+      const url =
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/" +
+        messageId + "?format=metadata&metadataHeaders=Subject";
+
+      const data = await gmailApiFetch(url);
+      const subjectHeader = (data.payload.headers || []).find(function (header) {
+        return header.name === "Subject";
+      });
+
+      return subjectHeader ? subjectHeader.value : "(제목 없음)";
+    }
+
+    async function checkGmailOrders(isBaseline) {
+      const messages = await fetchOrderEmails();
+      const currentIds = messages.map(function (message) {
+        return message.id;
+      });
+      const seenIds = getSeenMessageIds();
+
+      if (isBaseline) {
+        saveSeenMessageIds(currentIds);
+        return;
+      }
+
+      const newMessages = messages.filter(function (message) {
+        return !seenIds.includes(message.id);
+      });
+
+      if (newMessages.length === 0) {
+        return;
+      }
+
+      for (let i = 0; i < newMessages.length; i++) {
+        const subject = await fetchEmailSubject(newMessages[i].id);
+
+        if (Notification.permission === "granted") {
+          new Notification("새 주문 메일", {
+            body: subject,
+            icon: "https://www.gstatic.com/images/branding/product/1x/gmail_48dp.png"
+          });
+        }
+
+        showMessage("새 주문 메일: " + subject, 4000);
+      }
+
+      saveSeenMessageIds(currentIds);
+    }
+
+    async function startGmailNotification() {
+      if (!gmailAccessToken) {
+        showMessage("먼저 Gmail을 연결해 주세요.");
+        return;
+      }
+
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        showMessage("브라우저 알림 권한이 필요합니다.");
+        return;
+      }
+
+      try {
+        await checkGmailOrders(true);
+
+        if (gmailPollTimer) {
+          clearInterval(gmailPollTimer);
+        }
+
+        gmailPollTimer = setInterval(function () {
+          checkGmailOrders(false).catch(handleGmailError);
+        }, GMAIL_POLL_MS);
+
+        gmailNotifyEnabled = true;
+        localStorage.setItem(GMAIL_NOTIFY_KEY, "true");
+        updateGmailStatus("주문 메일 알림 켜짐 (3분마다 확인 중)", "is-active");
+        showMessage("Gmail 주문 알림을 켰습니다.", 2500);
+      } catch (error) {
+        handleGmailError(error);
+      }
+    }
+
+    function stopGmailNotification() {
+      if (gmailPollTimer) {
+        clearInterval(gmailPollTimer);
+        gmailPollTimer = null;
+      }
+
+      gmailAccessToken = "";
+      gmailNotifyEnabled = false;
+      localStorage.removeItem(GMAIL_NOTIFY_KEY);
+      gmailNotifyBtn.disabled = true;
+      gmailDisconnectBtn.disabled = true;
+      updateGmailStatus("Gmail 연결이 해제되었습니다.");
+    }
+
+    function handleGmailError(error) {
+      if (error && error.message === "TOKEN_EXPIRED") {
+        stopGmailPollingOnly();
+        updateGmailStatus("Gmail 토큰이 만료되었습니다. 다시 연결해 주세요.");
+        showMessage("Gmail 연결이 만료되었습니다. 다시 연결해 주세요.");
+        return;
+      }
+
+      console.error(error);
+      showMessage("Gmail 확인 중 오류가 발생했습니다.");
+    }
+
+    function stopGmailPollingOnly() {
+      if (gmailPollTimer) {
+        clearInterval(gmailPollTimer);
+        gmailPollTimer = null;
+      }
+
+      gmailAccessToken = "";
+      gmailNotifyEnabled = false;
+      localStorage.removeItem(GMAIL_NOTIFY_KEY);
+      gmailNotifyBtn.disabled = true;
     }
 
     function toCSVRow(row) {
@@ -951,6 +1307,17 @@
     });
     importFile.addEventListener("change", handleImportFile);
     exportBtn.addEventListener("click", exportCSV);
+
+    gmailSaveClientBtn.addEventListener("click", saveGmailClientId);
+    gmailConnectBtn.addEventListener("click", connectGmail);
+    gmailNotifyBtn.addEventListener("click", startGmailNotification);
+    gmailDisconnectBtn.addEventListener("click", stopGmailNotification);
+
+    loadGmailClientId();
+    waitForGoogleApi(initGmailAuth);
+    if (localStorage.getItem(GMAIL_NOTIFY_KEY) === "true") {
+      gmailNotifyEnabled = true;
+    }
 
     tableBody.addEventListener("click", function (event) {
       const button = event.target.closest("button");
