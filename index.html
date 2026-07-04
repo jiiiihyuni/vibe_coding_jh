@@ -619,6 +619,7 @@
       <div class="toolbar-actions">
         <button type="button" class="btn-gmail" id="gmail-connect-btn">Gmail 연결</button>
         <button type="button" id="gmail-notify-btn" disabled>알림 켜기</button>
+        <button type="button" class="btn-import" id="gmail-check-now-btn" disabled>지금 확인</button>
         <button type="button" class="btn-muted" id="gmail-disconnect-btn" disabled>연결 해제</button>
       </div>
     </div>
@@ -700,6 +701,7 @@
     const gmailSaveClientBtn = document.getElementById("gmail-save-client-btn");
     const gmailConnectBtn = document.getElementById("gmail-connect-btn");
     const gmailNotifyBtn = document.getElementById("gmail-notify-btn");
+    const gmailCheckNowBtn = document.getElementById("gmail-check-now-btn");
     const gmailDisconnectBtn = document.getElementById("gmail-disconnect-btn");
 
     const GMAIL_CLIENT_ID_KEY = "gmail-client-id";
@@ -837,6 +839,7 @@
 
           gmailAccessToken = response.access_token;
           gmailNotifyBtn.disabled = false;
+          gmailCheckNowBtn.disabled = false;
           gmailDisconnectBtn.disabled = false;
           updateGmailStatus("Gmail 연결됨. 알림 켜기를 눌러 주세요.", "is-connected");
 
@@ -928,7 +931,7 @@
 
       if (isBaseline) {
         saveSeenMessageIds(currentIds);
-        return;
+        return 0;
       }
 
       const newMessages = messages.filter(function (message) {
@@ -936,7 +939,7 @@
       });
 
       if (newMessages.length === 0) {
-        return;
+        return 0;
       }
 
       for (let i = 0; i < newMessages.length; i++) {
@@ -953,6 +956,30 @@
       }
 
       saveSeenMessageIds(currentIds);
+      return newMessages.length;
+    }
+
+    async function checkGmailNow() {
+      if (!gmailAccessToken) {
+        showMessage("먼저 Gmail을 연결해 주세요.");
+        return;
+      }
+
+      gmailCheckNowBtn.disabled = true;
+      gmailCheckNowBtn.textContent = "확인 중...";
+
+      try {
+        const newCount = await checkGmailOrders(false);
+
+        if (newCount === 0) {
+          showMessage("새 주문 메일이 없습니다.", 2500);
+        }
+      } catch (error) {
+        handleGmailError(error);
+      } finally {
+        gmailCheckNowBtn.textContent = "지금 확인";
+        gmailCheckNowBtn.disabled = !gmailAccessToken;
+      }
     }
 
     async function startGmailNotification() {
@@ -997,6 +1024,7 @@
       gmailNotifyEnabled = false;
       localStorage.removeItem(GMAIL_NOTIFY_KEY);
       gmailNotifyBtn.disabled = true;
+      gmailCheckNowBtn.disabled = true;
       gmailDisconnectBtn.disabled = true;
       updateGmailStatus("Gmail 연결이 해제되었습니다.");
     }
@@ -1023,6 +1051,7 @@
       gmailNotifyEnabled = false;
       localStorage.removeItem(GMAIL_NOTIFY_KEY);
       gmailNotifyBtn.disabled = true;
+      gmailCheckNowBtn.disabled = true;
     }
 
     function toCSVRow(row) {
@@ -1311,6 +1340,7 @@
     gmailSaveClientBtn.addEventListener("click", saveGmailClientId);
     gmailConnectBtn.addEventListener("click", connectGmail);
     gmailNotifyBtn.addEventListener("click", startGmailNotification);
+    gmailCheckNowBtn.addEventListener("click", checkGmailNow);
     gmailDisconnectBtn.addEventListener("click", stopGmailNotification);
 
     loadGmailClientId();
