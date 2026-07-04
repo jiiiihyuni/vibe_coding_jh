@@ -79,6 +79,26 @@
       background: #047857;
     }
 
+    .btn-template {
+      background: #7c3aed;
+    }
+
+    .btn-template:hover {
+      background: #6d28d9;
+    }
+
+    .btn-import {
+      background: #0891b2;
+    }
+
+    .btn-import:hover {
+      background: #0e7490;
+    }
+
+    #import-file {
+      display: none;
+    }
+
     .form-box {
       background: #fff;
       padding: 1.5rem;
@@ -254,7 +274,10 @@
 
   <div class="toolbar">
     <input type="text" id="search" placeholder="상품명 검색...">
-    <button type="button" class="btn-export" id="export-btn">CSV 내보내기</button>
+    <button type="button" class="btn-template" id="template-btn">양식 다운로드</button>
+    <button type="button" class="btn-import" id="import-btn">CSV 업로드</button>
+    <input type="file" id="import-file" accept=".csv,text/csv">
+    <button type="button" class="btn-export" id="export-btn">CSV보내기</button>
   </div>
 
   <div class="form-box">
@@ -304,8 +327,8 @@
   </div>
 
   <p class="note">
-    ※ 검색은 상품명 기준 &nbsp;|&nbsp; CSV 내보내기로 엑셀에서 열 수 있어요<br>
-    ※ 데이터는 이 브라우저에 저장됩니다
+    ※ 양식 다운로드 후 엑셀에서 작성하고 CSV로 저장해 업로드하세요<br>
+    ※ CSV 업로드는 기존 상품에 추가됩니다 &nbsp;|&nbsp; 데이터는 이 브라우저에 저장됩니다
   </p>
 
   <script>
@@ -319,6 +342,9 @@
     const message = document.getElementById("message");
     const searchInput = document.getElementById("search");
     const exportBtn = document.getElementById("export-btn");
+    const templateBtn = document.getElementById("template-btn");
+    const importBtn = document.getElementById("import-btn");
+    const importFile = document.getElementById("import-file");
     const totalBuyEl = document.getElementById("total-buy");
     const totalSellEl = document.getElementById("total-sell");
     const totalProfitEl = document.getElementById("total-profit");
@@ -377,11 +403,179 @@
       });
     }
 
-    function showMessage(text) {
+    function showMessage(text, duration) {
       message.textContent = text;
       setTimeout(function () {
         message.textContent = "";
-      }, 2000);
+      }, duration || 2000);
+    }
+
+    function toCSVRow(row) {
+      return row.map(function (cell) {
+        return '"' + String(cell).replace(/"/g, '""') + '"';
+      }).join(",");
+    }
+
+    function downloadCSV(filename, rows) {
+      const csvContent = rows.map(toCSVRow).join("\n");
+      const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    function downloadTemplate() {
+      downloadCSV("재고_업로드_양식.csv", [
+        ["상품명", "수량", "매입가", "판매가"],
+        ["무선 마우스", 25, 12000, 18900]
+      ]);
+    }
+
+    function parseCSV(text) {
+      text = text.replace(/^\uFEFF/, "");
+      const rows = [];
+      let row = [];
+      let cell = "";
+      let inQuotes = false;
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+
+        if (inQuotes) {
+          if (ch === '"') {
+            if (text[i + 1] === '"') {
+              cell += '"';
+              i++;
+            } else {
+              inQuotes = false;
+            }
+          } else {
+            cell += ch;
+          }
+        } else if (ch === '"') {
+          inQuotes = true;
+        } else if (ch === ",") {
+          row.push(cell);
+          cell = "";
+        } else if (ch === "\n" || ch === "\r") {
+          if (ch === "\r" && text[i + 1] === "\n") {
+            i++;
+          }
+          row.push(cell);
+          if (row.some(function (value) { return value.trim() !== ""; })) {
+            rows.push(row);
+          }
+          row = [];
+          cell = "";
+        } else {
+          cell += ch;
+        }
+      }
+
+      if (cell !== "" || row.length > 0) {
+        row.push(cell);
+        if (row.some(function (value) { return value.trim() !== ""; })) {
+          rows.push(row);
+        }
+      }
+
+      return rows;
+    }
+
+    function normalizeHeader(header) {
+      return header.trim().replace(/\s/g, "");
+    }
+
+    function importFromCSV(rows) {
+      if (rows.length === 0) {
+        throw new Error("파일에 데이터가 없습니다.");
+      }
+
+      const headers = rows[0].map(normalizeHeader);
+      const nameIndex = headers.indexOf("상품명");
+      const quantityIndex = headers.indexOf("수량");
+      const buyPriceIndex = headers.indexOf("매입가");
+      const sellPriceIndex = headers.indexOf("판매가");
+
+      if (nameIndex === -1 || quantityIndex === -1 || buyPriceIndex === -1 || sellPriceIndex === -1) {
+        throw new Error("양식이 올바르지 않습니다. 상품명, 수량, 매입가, 판매가 컬럼이 필요합니다.");
+      }
+
+      const imported = [];
+      const errors = [];
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const name = (row[nameIndex] || "").trim();
+
+        if (!name) {
+          continue;
+        }
+
+        const quantity = Number(row[quantityIndex]);
+        const buyPrice = Number(row[buyPriceIndex]);
+        const sellPrice = Number(row[sellPriceIndex]);
+
+        if (isNaN(quantity) || isNaN(buyPrice) || isNaN(sellPrice)) {
+          errors.push((i + 1) + "행: 숫자 형식이 올바르지 않습니다.");
+          continue;
+        }
+
+        if (quantity < 0 || buyPrice < 0 || sellPrice < 0) {
+          errors.push((i + 1) + "행: 수량과 가격은 0 이상이어야 합니다.");
+          continue;
+        }
+
+        imported.push({
+          name: name,
+          quantity: quantity,
+          buyPrice: buyPrice,
+          sellPrice: sellPrice
+        });
+      }
+
+      if (imported.length === 0) {
+        throw new Error(errors[0] || "가져올 수 있는 상품이 없습니다.");
+      }
+
+      products = products.concat(imported);
+      saveProducts();
+      renderTable();
+
+      let resultMessage = imported.length + "개 상품을 추가했습니다.";
+      if (errors.length > 0) {
+        resultMessage += " (" + errors.length + "행 건너뜀)";
+      }
+      showMessage(resultMessage, 3000);
+    }
+
+    function handleImportFile(event) {
+      const file = event.target.files[0];
+      event.target.value = "";
+
+      if (!file) {
+        return;
+      }
+
+      const reader = new FileReader();
+
+      reader.onload = function () {
+        try {
+          const rows = parseCSV(reader.result);
+          importFromCSV(rows);
+        } catch (error) {
+          showMessage(error.message);
+        }
+      };
+
+      reader.onerror = function () {
+        showMessage("파일을 읽을 수 없습니다.");
+      };
+
+      reader.readAsText(file, "UTF-8");
     }
 
     function updateSummary() {
@@ -444,22 +638,8 @@
         ];
       });
 
-      const csvContent = [headers].concat(rows)
-        .map(function (row) {
-          return row.map(function (cell) {
-            return '"' + String(cell).replace(/"/g, '""') + '"';
-          }).join(",");
-        })
-        .join("\n");
-
-      const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-      const link = document.createElement("a");
       const today = new Date().toISOString().slice(0, 10);
-
-      link.href = URL.createObjectURL(blob);
-      link.download = "재고목록_" + today + ".csv";
-      link.click();
-      URL.revokeObjectURL(link.href);
+      downloadCSV("재고목록_" + today + ".csv", [headers].concat(rows));
     }
 
     function renderTable() {
@@ -506,6 +686,11 @@
       renderTable();
     });
 
+    templateBtn.addEventListener("click", downloadTemplate);
+    importBtn.addEventListener("click", function () {
+      importFile.click();
+    });
+    importFile.addEventListener("change", handleImportFile);
     exportBtn.addEventListener("click", exportCSV);
 
     tableBody.addEventListener("click", function (event) {
