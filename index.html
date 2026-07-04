@@ -492,6 +492,12 @@
       border-color: #c7d2fe;
     }
 
+    .gmail-status.is-error {
+      color: #b91c1c;
+      background: var(--danger-soft);
+      border-color: #fecaca;
+    }
+
     .btn-gmail {
       background: #ea4335;
       box-shadow: 0 4px 12px rgba(234, 67, 53, 0.2);
@@ -620,6 +626,7 @@
         <button type="button" class="btn-gmail" id="gmail-connect-btn">Gmail 연결</button>
         <button type="button" id="gmail-notify-btn" disabled>알림 켜기</button>
         <button type="button" class="btn-import" id="gmail-check-now-btn" disabled>지금 확인</button>
+        <button type="button" class="btn-template" id="gmail-reset-seen-btn" disabled>확인 기록 초기화</button>
         <button type="button" class="btn-muted" id="gmail-disconnect-btn" disabled>연결 해제</button>
       </div>
     </div>
@@ -702,6 +709,7 @@
     const gmailConnectBtn = document.getElementById("gmail-connect-btn");
     const gmailNotifyBtn = document.getElementById("gmail-notify-btn");
     const gmailCheckNowBtn = document.getElementById("gmail-check-now-btn");
+    const gmailResetSeenBtn = document.getElementById("gmail-reset-seen-btn");
     const gmailDisconnectBtn = document.getElementById("gmail-disconnect-btn");
 
     const GMAIL_CLIENT_ID_KEY = "gmail-client-id";
@@ -785,6 +793,13 @@
       }
     }
 
+    function setGmailControlsConnected(isConnected) {
+      gmailNotifyBtn.disabled = !isConnected;
+      gmailCheckNowBtn.disabled = !isConnected;
+      gmailResetSeenBtn.disabled = !isConnected;
+      gmailDisconnectBtn.disabled = !isConnected;
+    }
+
     function getGmailClientId() {
       return gmailClientIdInput.value.trim();
     }
@@ -838,10 +853,8 @@
           }
 
           gmailAccessToken = response.access_token;
-          gmailNotifyBtn.disabled = false;
-          gmailCheckNowBtn.disabled = false;
-          gmailDisconnectBtn.disabled = false;
-          updateGmailStatus("Gmail 연결됨. 알림 켜기를 눌러 주세요.", "is-connected");
+          setGmailControlsConnected(true);
+          updateGmailStatus("Gmail 연결됨. 지금 확인 또는 알림 켜기를 눌러 주세요.", "is-connected");
 
           if (gmailNotifyEnabled) {
             startGmailNotification();
@@ -893,7 +906,18 @@
       }
 
       if (!response.ok) {
-        throw new Error("Gmail API 오류");
+        let errorMessage = "Gmail API 오류 (" + response.status + ")";
+
+        try {
+          const errorData = await response.json();
+          if (errorData.error && errorData.error.message) {
+            errorMessage = errorData.error.message;
+          }
+        } catch (parseError) {
+          // ignore JSON parse errors
+        }
+
+        throw new Error(errorMessage);
       }
 
       return response.json();
@@ -928,22 +952,26 @@
         return message.id;
       });
       const seenIds = getSeenMessageIds();
+      const result = {
+        total: messages.length,
+        newCount: 0,
+        newSubjects: []
+      };
 
       if (isBaseline) {
         saveSeenMessageIds(currentIds);
-        return 0;
+        return result;
       }
 
       const newMessages = messages.filter(function (message) {
         return !seenIds.includes(message.id);
       });
 
-      if (newMessages.length === 0) {
-        return 0;
-      }
+      result.newCount = newMessages.length;
 
       for (let i = 0; i < newMessages.length; i++) {
         const subject = await fetchEmailSubject(newMessages[i].id);
+        result.newSubjects.push(subject);
 
         if (Notification.permission === "granted") {
           new Notification("새 주문 메일", {
@@ -951,29 +979,55 @@
             icon: "https://www.gstatic.com/images/branding/product/1x/gmail_48dp.png"
           });
         }
-
-        showMessage("새 주문 메일: " + subject, 4000);
       }
 
-      saveSeenMessageIds(currentIds);
-      return newMessages.length;
+      if (newMessages.length > 0) {
+        saveSeenMessageIds(currentIds);
+        showMessage("새 주문 메일: " + result.newSubjects[0], 4000);
+      }
+
+      return result;
+    }
+
+    function resetGmailSeen() {
+      localStorage.removeItem(GMAIL_SEEN_KEY);
+      updateGmailStatus("확인 기록을 초기화했습니다. 지금 확인을 다시 눌러 주세요.", "is-connected");
+      showMessage("Gmail 확인 기록을 초기화했습니다.", 2500);
     }
 
     async function checkGmailNow() {
       if (!gmailAccessToken) {
-        showMessage("먼저 Gmail을 연결해 주세요.");
+        updateGmailStatus("먼저 Gmail 연결을 눌러 주세요. 페이지를 새로고침했다면 다시 연결이 필요합니다.", "is-error");
         return;
       }
 
       gmailCheckNowBtn.disabled = true;
       gmailCheckNowBtn.textContent = "확인 중...";
+      updateGmailStatus("Gmail 주문 메일을 확인하는 중...", "is-active");
 
       try {
-        const newCount = await checkGmailOrders(false);
+        const result = await checkGmailOrders(false);
 
-        if (newCount === 0) {
-          showMessage("새 주문 메일이 없습니다.", 2500);
+        if (result.total === 0) {
+          updateGmailStatus(
+            "주문 관련 메일이 없습니다. 제목에 '주문' 또는 '주문서'가 포함된 메일인지 확인해 주세요.",
+            "is-connected"
+          );
+          return;
         }
+
+        if (result.newCount === 0) {
+          updateGmailStatus(
+            "주문 메일 " + result.total + "건 있음. 모두 이미 확인한 메일입니다. '확인 기록 초기화' 후 다시 눌러 보세요.",
+            "is-connected"
+          );
+          return;
+        }
+
+        updateGmailStatus(
+          "새 주문 메일 " + result.newCount + "건: " + result.newSubjects.join(" / "),
+          "is-active"
+        );
       } catch (error) {
         handleGmailError(error);
       } finally {
@@ -1023,21 +1077,20 @@
       gmailAccessToken = "";
       gmailNotifyEnabled = false;
       localStorage.removeItem(GMAIL_NOTIFY_KEY);
-      gmailNotifyBtn.disabled = true;
-      gmailCheckNowBtn.disabled = true;
-      gmailDisconnectBtn.disabled = true;
+      setGmailControlsConnected(false);
       updateGmailStatus("Gmail 연결이 해제되었습니다.");
     }
 
     function handleGmailError(error) {
       if (error && error.message === "TOKEN_EXPIRED") {
         stopGmailPollingOnly();
-        updateGmailStatus("Gmail 토큰이 만료되었습니다. 다시 연결해 주세요.");
+        updateGmailStatus("Gmail 토큰이 만료되었습니다. Gmail 연결을 다시 눌러 주세요.", "is-error");
         showMessage("Gmail 연결이 만료되었습니다. 다시 연결해 주세요.");
         return;
       }
 
       console.error(error);
+      updateGmailStatus("Gmail 확인 실패: " + (error.message || "알 수 없는 오류"), "is-error");
       showMessage("Gmail 확인 중 오류가 발생했습니다.");
     }
 
@@ -1050,8 +1103,7 @@
       gmailAccessToken = "";
       gmailNotifyEnabled = false;
       localStorage.removeItem(GMAIL_NOTIFY_KEY);
-      gmailNotifyBtn.disabled = true;
-      gmailCheckNowBtn.disabled = true;
+      setGmailControlsConnected(false);
     }
 
     function toCSVRow(row) {
@@ -1341,10 +1393,15 @@
     gmailConnectBtn.addEventListener("click", connectGmail);
     gmailNotifyBtn.addEventListener("click", startGmailNotification);
     gmailCheckNowBtn.addEventListener("click", checkGmailNow);
+    gmailResetSeenBtn.addEventListener("click", resetGmailSeen);
     gmailDisconnectBtn.addEventListener("click", stopGmailNotification);
 
     loadGmailClientId();
+    setGmailControlsConnected(false);
     waitForGoogleApi(initGmailAuth);
+    if (localStorage.getItem(GMAIL_CLIENT_ID_KEY)) {
+      updateGmailStatus("Client ID가 저장되어 있습니다. Gmail 연결을 눌러 주세요.");
+    }
     if (localStorage.getItem(GMAIL_NOTIFY_KEY) === "true") {
       gmailNotifyEnabled = true;
     }
