@@ -498,6 +498,29 @@
       border-color: #fecaca;
     }
 
+    .gmail-permission {
+      margin: 0 0 0.85rem;
+      font-size: 0.84rem;
+      color: var(--text-muted);
+    }
+
+    .gmail-alert {
+      margin: 0 0 0.85rem;
+      padding: 0.95rem 1rem;
+      border-radius: var(--radius-sm);
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      color: #9a3412;
+      font-weight: 600;
+      line-height: 1.5;
+      animation: gmailPulse 0.6s ease;
+    }
+
+    @keyframes gmailPulse {
+      0% { transform: scale(0.98); opacity: 0.5; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
     .btn-gmail {
       background: #ea4335;
       box-shadow: 0 4px 12px rgba(234, 67, 53, 0.2);
@@ -621,10 +644,13 @@
           <button type="button" class="btn-muted" id="gmail-save-client-btn">ID 저장</button>
         </div>
       </div>
+      <p class="gmail-permission" id="gmail-permission"></p>
+      <div class="gmail-alert" id="gmail-alert" hidden></div>
       <p class="gmail-status" id="gmail-status">Client ID를 입력하고 Gmail을 연결해 주세요.</p>
       <div class="toolbar-actions">
         <button type="button" class="btn-gmail" id="gmail-connect-btn">Gmail 연결</button>
         <button type="button" id="gmail-notify-btn" disabled>알림 켜기</button>
+        <button type="button" class="btn-export" id="gmail-test-notify-btn" disabled>알림 테스트</button>
         <button type="button" class="btn-import" id="gmail-check-now-btn" disabled>지금 확인</button>
         <button type="button" class="btn-template" id="gmail-reset-seen-btn" disabled>확인 기록 초기화</button>
         <button type="button" class="btn-muted" id="gmail-disconnect-btn" disabled>연결 해제</button>
@@ -705,9 +731,12 @@
     const totalProfitEl = document.getElementById("total-profit");
     const gmailClientIdInput = document.getElementById("gmail-client-id");
     const gmailStatusEl = document.getElementById("gmail-status");
+    const gmailPermissionEl = document.getElementById("gmail-permission");
+    const gmailAlertEl = document.getElementById("gmail-alert");
     const gmailSaveClientBtn = document.getElementById("gmail-save-client-btn");
     const gmailConnectBtn = document.getElementById("gmail-connect-btn");
     const gmailNotifyBtn = document.getElementById("gmail-notify-btn");
+    const gmailTestNotifyBtn = document.getElementById("gmail-test-notify-btn");
     const gmailCheckNowBtn = document.getElementById("gmail-check-now-btn");
     const gmailResetSeenBtn = document.getElementById("gmail-reset-seen-btn");
     const gmailDisconnectBtn = document.getElementById("gmail-disconnect-btn");
@@ -795,9 +824,98 @@
 
     function setGmailControlsConnected(isConnected) {
       gmailNotifyBtn.disabled = !isConnected;
+      gmailTestNotifyBtn.disabled = !isConnected;
       gmailCheckNowBtn.disabled = !isConnected;
       gmailResetSeenBtn.disabled = !isConnected;
       gmailDisconnectBtn.disabled = !isConnected;
+      updateNotificationPermissionLabel();
+    }
+
+    function updateNotificationPermissionLabel() {
+      if (!("Notification" in window)) {
+        gmailPermissionEl.textContent = "브라우저 알림: 이 브라우저는 알림을 지원하지 않습니다.";
+        return;
+      }
+
+      if (Notification.permission === "granted") {
+        gmailPermissionEl.textContent = "브라우저 알림: 허용됨";
+        return;
+      }
+
+      if (Notification.permission === "denied") {
+        gmailPermissionEl.textContent = "브라우저 알림: 차단됨 → 주소창 자물쇠 아이콘 → 알림 허용";
+        return;
+      }
+
+      gmailPermissionEl.textContent = "브라우저 알림: 아직 허용 안 됨 → 알림 테스트 또는 알림 켜기를 눌러 주세요";
+    }
+
+    async function ensureNotificationPermission() {
+      if (!("Notification" in window)) {
+        return "unsupported";
+      }
+
+      if (Notification.permission === "granted") {
+        return "granted";
+      }
+
+      if (Notification.permission === "denied") {
+        return "denied";
+      }
+
+      return Notification.requestPermission();
+    }
+
+    function showOrderNotification(subject) {
+      if (!("Notification" in window) || Notification.permission !== "granted") {
+        return false;
+      }
+
+      try {
+        const notification = new Notification("새 주문 메일", {
+          body: subject,
+          icon: "https://www.gstatic.com/images/branding/product/1x/gmail_48dp.png",
+          tag: "gmail-order-" + Date.now(),
+          requireInteraction: true
+        });
+
+        notification.onclick = function () {
+          window.focus();
+          notification.close();
+        };
+
+        return true;
+      } catch (error) {
+        console.error(error);
+        return false;
+      }
+    }
+
+    function showGmailAlert(subjects) {
+      gmailAlertEl.hidden = false;
+      gmailAlertEl.textContent = "새 주문 메일 " + subjects.length + "건: " + subjects.join(" / ");
+    }
+
+    function hideGmailAlert() {
+      gmailAlertEl.hidden = true;
+      gmailAlertEl.textContent = "";
+    }
+
+    async function testBrowserNotification() {
+      hideGmailAlert();
+      const permission = await ensureNotificationPermission();
+      updateNotificationPermissionLabel();
+
+      if (permission !== "granted") {
+        updateGmailStatus("브라우저 알림이 차단되어 있습니다. 주소창 자물쇠 → 사이트 설정 → 알림 허용", "is-error");
+        return;
+      }
+
+      const shown = showOrderNotification("알림 테스트입니다. 이 메시지가 보이면 정상입니다.");
+      if (shown) {
+        showGmailAlert(["알림 테스트 - 화면 상단 배너"]);
+        updateGmailStatus("테스트 알림을 보냈습니다. 브라우저/OS 알림 센터와 주황색 배너를 확인해 주세요.", "is-active");
+      }
     }
 
     function getGmailClientId() {
@@ -955,7 +1073,8 @@
       const result = {
         total: messages.length,
         newCount: 0,
-        newSubjects: []
+        newSubjects: [],
+        browserNotifications: 0
       };
 
       if (isBaseline) {
@@ -973,16 +1092,14 @@
         const subject = await fetchEmailSubject(newMessages[i].id);
         result.newSubjects.push(subject);
 
-        if (Notification.permission === "granted") {
-          new Notification("새 주문 메일", {
-            body: subject,
-            icon: "https://www.gstatic.com/images/branding/product/1x/gmail_48dp.png"
-          });
+        if (showOrderNotification(subject)) {
+          result.browserNotifications += 1;
         }
       }
 
       if (newMessages.length > 0) {
         saveSeenMessageIds(currentIds);
+        showGmailAlert(result.newSubjects);
         showMessage("새 주문 메일: " + result.newSubjects[0], 4000);
       }
 
@@ -1001,11 +1118,15 @@
         return;
       }
 
+      hideGmailAlert();
       gmailCheckNowBtn.disabled = true;
       gmailCheckNowBtn.textContent = "확인 중...";
       updateGmailStatus("Gmail 주문 메일을 확인하는 중...", "is-active");
 
       try {
+        await ensureNotificationPermission();
+        updateNotificationPermissionLabel();
+
         const result = await checkGmailOrders(false);
 
         if (result.total === 0) {
@@ -1024,10 +1145,15 @@
           return;
         }
 
-        updateGmailStatus(
-          "새 주문 메일 " + result.newCount + "건: " + result.newSubjects.join(" / "),
-          "is-active"
-        );
+        let statusText = "새 주문 메일 " + result.newCount + "건: " + result.newSubjects.join(" / ");
+
+        if (Notification.permission !== "granted") {
+          statusText += " (브라우저 알림 권한 없음 → 주황색 배너만 표시됨)";
+        } else if (result.browserNotifications === 0) {
+          statusText += " (OS 알림 표시 실패 → 주황색 배너 확인)";
+        }
+
+        updateGmailStatus(statusText, "is-active");
       } catch (error) {
         handleGmailError(error);
       } finally {
@@ -1042,8 +1168,10 @@
         return;
       }
 
-      const permission = await Notification.requestPermission();
+      const permission = await ensureNotificationPermission();
+      updateNotificationPermissionLabel();
       if (permission !== "granted") {
+        updateGmailStatus("브라우저 알림 권한이 필요합니다. 주소창 자물쇠 → 알림 허용 후 다시 시도해 주세요.", "is-error");
         showMessage("브라우저 알림 권한이 필요합니다.");
         return;
       }
@@ -1392,12 +1520,14 @@
     gmailSaveClientBtn.addEventListener("click", saveGmailClientId);
     gmailConnectBtn.addEventListener("click", connectGmail);
     gmailNotifyBtn.addEventListener("click", startGmailNotification);
+    gmailTestNotifyBtn.addEventListener("click", testBrowserNotification);
     gmailCheckNowBtn.addEventListener("click", checkGmailNow);
     gmailResetSeenBtn.addEventListener("click", resetGmailSeen);
     gmailDisconnectBtn.addEventListener("click", stopGmailNotification);
 
     loadGmailClientId();
     setGmailControlsConnected(false);
+    updateNotificationPermissionLabel();
     waitForGoogleApi(initGmailAuth);
     if (localStorage.getItem(GMAIL_CLIENT_ID_KEY)) {
       updateGmailStatus("Client ID가 저장되어 있습니다. Gmail 연결을 눌러 주세요.");
