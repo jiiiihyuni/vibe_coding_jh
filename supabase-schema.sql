@@ -3,7 +3,7 @@
 
 -- 1. products 테이블 생성
 create table if not exists public.products (
-  id uuid primary key default gen_random_uuid(),
+  id bigint generated always as identity primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   quantity integer not null default 0 check (quantity >= 0),
