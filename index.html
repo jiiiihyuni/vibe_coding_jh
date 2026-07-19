@@ -593,6 +593,75 @@
     }
   </style>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    .auth-box {
+      max-width: 400px;
+      margin: 4rem auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-md);
+      padding: 2rem;
+    }
+
+    .auth-box h2 {
+      margin: 0 0 0.35rem;
+      font-size: 1.3rem;
+    }
+
+    .auth-box p {
+      margin: 0 0 1.25rem;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+
+    .auth-field {
+      margin-bottom: 1rem;
+    }
+
+    .auth-actions {
+      display: flex;
+      gap: 0.6rem;
+      margin-top: 0.5rem;
+    }
+
+    .auth-actions button {
+      flex: 1;
+    }
+
+    .btn-secondary {
+      background: var(--surface-muted);
+      color: var(--text);
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+
+    .btn-secondary:hover {
+      background: var(--border);
+    }
+
+    .auth-message {
+      margin-top: 0.9rem;
+      font-size: 0.85rem;
+      min-height: 1.2rem;
+    }
+
+    .auth-message.is-error { color: var(--danger); }
+    .auth-message.is-ok { color: var(--success); }
+
+    .user-bar {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+
+    [hidden] { display: none !important; }
+  </style>
 </head>
 <body>
   <div class="app">
@@ -601,7 +670,31 @@
       <p>상품 재고와 예상 이익을 한눈에 확인하세요</p>
     </header>
 
-    <div class="summary-box">
+    <div id="auth-box" class="auth-box">
+      <h2 id="auth-title">로그인</h2>
+      <p>이메일과 비밀번호로 로그인하거나 새 계정을 만드세요.</p>
+      <div class="auth-field">
+        <label for="auth-email">이메일</label>
+        <input type="email" id="auth-email" placeholder="you@example.com">
+      </div>
+      <div class="auth-field">
+        <label for="auth-password">비밀번호</label>
+        <input type="password" id="auth-password" placeholder="6자 이상">
+      </div>
+      <div class="auth-actions">
+        <button type="button" id="auth-login-btn">로그인</button>
+        <button type="button" class="btn-secondary" id="auth-signup-btn">회원가입</button>
+      </div>
+      <p class="auth-message" id="auth-message"></p>
+    </div>
+
+    <div id="app-content" hidden>
+      <div class="user-bar">
+        <span id="user-email"></span>
+        <button type="button" class="btn-secondary btn-small" id="logout-btn">로그아웃</button>
+      </div>
+
+      <div class="summary-box">
       <div class="summary-item summary-buy">
         <div class="label">전체 재고 매입액</div>
         <div class="value" id="total-buy">0원</div>
@@ -705,18 +798,36 @@
       </div>
     </div>
 
-    <p class="note">
-      ※ 양식 다운로드 후 엑셀에서 작성하고 CSV로 저장해 업로드하세요<br>
-      ※ CSV 업로드는 기존 상품에 추가됩니다 &nbsp;|&nbsp; 데이터는 이 브라우저에 저장됩니다<br>
-      ※ Gmail 알림은 앱 탭이 열려 있을 때 3분마다 확인합니다
-    </p>
+      <p class="note">
+        ※ 양식 다운로드 후 엑셀에서 작성하고 CSV로 저장해 업로드하세요<br>
+        ※ CSV 업로드는 기존 상품에 추가됩니다 &nbsp;|&nbsp; 데이터는 Supabase 계정에 저장되어 로그인하면 어디서든 볼 수 있습니다<br>
+        ※ Gmail 알림은 앱 탭이 열려 있을 때 3분마다 확인합니다
+      </p>
+    </div>
   </div>
 
   <script>
-    const STORAGE_KEY = "inventory-products";
+    // ── Supabase 설정 ──────────────────────────────────────────────
+    // Supabase 대시보드 > Project Settings > API 에서 값을 복사해 채워 넣으세요.
+    const SUPABASE_URL = "https://qgomzgdugiruazffntra.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFnb216Z2R1Z2lydWF6ZmZudHJhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0MTk5ODgsImV4cCI6MjA5OTk5NTk4OH0.8q82cihiZLr7FRJNLgEhvcRB_kT4g4YNxLH42KTyFoE";
+
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    let currentUser = null;
+    // ──────────────────────────────────────────────────────────────
 
     let products = [];
     let searchKeyword = "";
+
+    const authBox = document.getElementById("auth-box");
+    const appContent = document.getElementById("app-content");
+    const authEmailInput = document.getElementById("auth-email");
+    const authPasswordInput = document.getElementById("auth-password");
+    const authLoginBtn = document.getElementById("auth-login-btn");
+    const authSignupBtn = document.getElementById("auth-signup-btn");
+    const authMessage = document.getElementById("auth-message");
+    const userEmailEl = document.getElementById("user-email");
+    const logoutBtn = document.getElementById("logout-btn");
 
     const tableBody = document.getElementById("product-table");
     const form = document.getElementById("add-form");
@@ -780,23 +891,179 @@
       return product.quantity * calcUnitProfit(product);
     }
 
-    function saveProducts() {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
+    // ── 인증 ───────────────────────────────────────────────────────
+    function setAuthMessage(text, state) {
+      authMessage.textContent = text || "";
+      authMessage.className = "auth-message" + (state ? " " + state : "");
     }
 
-    function loadProducts() {
-      const saved = localStorage.getItem(STORAGE_KEY);
+    async function handleSignup() {
+      const email = authEmailInput.value.trim();
+      const password = authPasswordInput.value;
 
-      if (saved) {
-        products = JSON.parse(saved);
-      } else {
-        products = [
-          { name: "무선 마우스", quantity: 25, buyPrice: 12000, sellPrice: 18900 },
-          { name: "USB-C 케이블", quantity: 40, buyPrice: 3500, sellPrice: 7900 },
-          { name: "노트북 파우치", quantity: 12, buyPrice: 15000, sellPrice: 24900 }
-        ];
-        saveProducts();
+      if (!email || !password) {
+        setAuthMessage("이메일과 비밀번호를 입력해 주세요.", "is-error");
+        return;
       }
+
+      const { error } = await supabaseClient.auth.signUp({ email, password });
+
+      if (error) {
+        setAuthMessage(error.message, "is-error");
+        return;
+      }
+
+      setAuthMessage("가입 확인 메일을 확인해 주세요. (메일 확인이 꺼져 있으면 바로 로그인됩니다)", "is-ok");
+    }
+
+    async function handleLogin() {
+      const email = authEmailInput.value.trim();
+      const password = authPasswordInput.value;
+
+      if (!email || !password) {
+        setAuthMessage("이메일과 비밀번호를 입력해 주세요.", "is-error");
+        return;
+      }
+
+      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+
+      if (error) {
+        setAuthMessage(error.message, "is-error");
+      }
+    }
+
+    async function handleLogout() {
+      await supabaseClient.auth.signOut();
+    }
+
+    async function onAuthReady(user) {
+      currentUser = user;
+
+      if (user) {
+        authBox.hidden = true;
+        appContent.hidden = false;
+        userEmailEl.textContent = user.email;
+        await loadProducts();
+      } else {
+        authBox.hidden = false;
+        appContent.hidden = true;
+        products = [];
+        setAuthMessage("");
+        authPasswordInput.value = "";
+      }
+    }
+
+    supabaseClient.auth.onAuthStateChange(function (_event, session) {
+      onAuthReady(session ? session.user : null);
+    });
+
+    authLoginBtn.addEventListener("click", handleLogin);
+    authSignupBtn.addEventListener("click", handleSignup);
+    logoutBtn.addEventListener("click", handleLogout);
+    // ──────────────────────────────────────────────────────────────
+
+    function toRow(product) {
+      return {
+        id: product.id,
+        user_id: currentUser.id,
+        name: product.name,
+        quantity: product.quantity,
+        buy_price: product.buyPrice,
+        sell_price: product.sellPrice
+      };
+    }
+
+    function fromRow(row) {
+      return {
+        id: row.id,
+        name: row.name,
+        quantity: row.quantity,
+        buyPrice: row.buy_price,
+        sellPrice: row.sell_price
+      };
+    }
+
+    async function loadProducts() {
+      const { data, error } = await supabaseClient
+        .from("products")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        showMessage("상품을 불러오지 못했습니다: " + error.message);
+        products = [];
+        renderTable();
+        return;
+      }
+
+      products = data.map(fromRow);
+      renderTable();
+    }
+
+    async function addProduct(product) {
+      const { data, error } = await supabaseClient
+        .from("products")
+        .insert({
+          user_id: currentUser.id,
+          name: product.name,
+          quantity: product.quantity,
+          buy_price: product.buyPrice,
+          sell_price: product.sellPrice
+        })
+        .select()
+        .single();
+
+      if (error) {
+        showMessage("상품 추가 실패: " + error.message);
+        return null;
+      }
+
+      return fromRow(data);
+    }
+
+    async function addProductsBulk(items) {
+      const rows = items.map(function (product) {
+        return {
+          user_id: currentUser.id,
+          name: product.name,
+          quantity: product.quantity,
+          buy_price: product.buyPrice,
+          sell_price: product.sellPrice
+        };
+      });
+
+      const { data, error } = await supabaseClient.from("products").insert(rows).select();
+
+      if (error) {
+        throw new Error("업로드 실패: " + error.message);
+      }
+
+      return data.map(fromRow);
+    }
+
+    async function updateProductQuantity(id, quantity) {
+      const { error } = await supabaseClient
+        .from("products")
+        .update({ quantity: quantity })
+        .eq("id", id);
+
+      if (error) {
+        showMessage("수량 변경 실패: " + error.message);
+        return false;
+      }
+
+      return true;
+    }
+
+    async function removeProduct(id) {
+      const { error } = await supabaseClient.from("products").delete().eq("id", id);
+
+      if (error) {
+        showMessage("삭제 실패: " + error.message);
+        return false;
+      }
+
+      return true;
     }
 
     function getFilteredProducts() {
@@ -1313,7 +1580,7 @@
       return header.trim().replace(/\s/g, "");
     }
 
-    function importFromCSV(rows) {
+    async function importFromCSV(rows) {
       if (rows.length === 0) {
         throw new Error("파일에 데이터가 없습니다.");
       }
@@ -1365,8 +1632,8 @@
         throw new Error(errors[0] || "가져올 수 있는 상품이 없습니다.");
       }
 
-      products = products.concat(imported);
-      saveProducts();
+      const inserted = await addProductsBulk(imported);
+      products = products.concat(inserted);
       renderTable();
 
       let resultMessage = imported.length + "개 상품을 추가했습니다.";
@@ -1386,10 +1653,10 @@
 
       const reader = new FileReader();
 
-      reader.onload = function () {
+      reader.onload = async function () {
         try {
           const rows = parseCSV(reader.result);
-          importFromCSV(rows);
+          await importFromCSV(rows);
         } catch (error) {
           showMessage(error.message);
         }
@@ -1419,7 +1686,7 @@
       totalProfitEl.className = "value " + getProfitClass(totalProfit);
     }
 
-    function changeQuantity(index, amount) {
+    async function changeQuantity(index, amount) {
       const product = products[index];
       const newQuantity = product.quantity + amount;
 
@@ -1428,17 +1695,21 @@
         return;
       }
 
+      const ok = await updateProductQuantity(product.id, newQuantity);
+      if (!ok) return;
+
       product.quantity = newQuantity;
-      saveProducts();
       renderTable();
     }
 
-    function deleteProduct(index) {
-      const productName = products[index].name;
+    async function deleteProduct(index) {
+      const product = products[index];
 
-      if (confirm('"' + productName + '" 상품을 삭제할까요?')) {
+      if (confirm('"' + product.name + '" 상품을 삭제할까요?')) {
+        const ok = await removeProduct(product.id);
+        if (!ok) return;
+
         products.splice(index, 1);
-        saveProducts();
         renderTable();
       }
     }
@@ -1552,7 +1823,7 @@
       }
     });
 
-    form.addEventListener("submit", function (event) {
+    form.addEventListener("submit", async function (event) {
       event.preventDefault();
       message.textContent = "";
 
@@ -1571,16 +1842,15 @@
         return;
       }
 
-      products.push({ name: name, quantity: quantity, buyPrice: buyPrice, sellPrice: sellPrice });
-      saveProducts();
+      const created = await addProduct({ name: name, quantity: quantity, buyPrice: buyPrice, sellPrice: sellPrice });
+      if (!created) return;
+
+      products.push(created);
       renderTable();
 
       form.reset();
       document.getElementById("name").focus();
     });
-
-    loadProducts();
-    renderTable();
   </script>
 </body>
 </html>
