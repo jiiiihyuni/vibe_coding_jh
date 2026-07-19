@@ -28,36 +28,46 @@ create table if not exists public.allowed_users (
 alter table public.products enable row level security;
 alter table public.allowed_users enable row level security;
 
--- 5. 기존(본인 데이터만 보이던) 정책이 있다면 제거
+-- 5. 기존 정책이 있다면 제거 (재실행 가능하도록)
 drop policy if exists "Users can view own products" on public.products;
 drop policy if exists "Users can insert own products" on public.products;
 drop policy if exists "Users can update own products" on public.products;
 drop policy if exists "Users can delete own products" on public.products;
+drop policy if exists "Allowed users can view products" on public.products;
+drop policy if exists "Allowed users can insert products" on public.products;
+drop policy if exists "Allowed users can update products" on public.products;
+drop policy if exists "Allowed users can delete products" on public.products;
+drop policy if exists "Shared view for allow-list, own-only for others" on public.products;
+drop policy if exists "Anyone logged in can insert their own products" on public.products;
+drop policy if exists "Shared update for allow-list, own-only for others" on public.products;
+drop policy if exists "Shared delete for allow-list, own-only for others" on public.products;
 
--- 6. 허용 명단에 있는 사람은 서로의 재고 데이터를 모두 조회/수정 가능
-create policy "Allowed users can view products"
+-- 6. 허용 명단에 있는 사람은 모든 사람의 재고 데이터를 조회/수정 가능.
+--    명단에 없는 사람은 본인이 작성한 데이터만 조회/수정 가능.
+create policy "Shared view for allow-list, own-only for others"
   on public.products for select
-  using (exists (
-    select 1 from public.allowed_users au where au.user_id = auth.uid()
-  ));
+  using (
+    exists (select 1 from public.allowed_users au where au.user_id = auth.uid())
+    or user_id = auth.uid()
+  );
 
-create policy "Allowed users can insert products"
+create policy "Anyone logged in can insert their own products"
   on public.products for insert
-  with check (exists (
-    select 1 from public.allowed_users au where au.user_id = auth.uid()
-  ));
+  with check (user_id = auth.uid());
 
-create policy "Allowed users can update products"
+create policy "Shared update for allow-list, own-only for others"
   on public.products for update
-  using (exists (
-    select 1 from public.allowed_users au where au.user_id = auth.uid()
-  ));
+  using (
+    exists (select 1 from public.allowed_users au where au.user_id = auth.uid())
+    or user_id = auth.uid()
+  );
 
-create policy "Allowed users can delete products"
+create policy "Shared delete for allow-list, own-only for others"
   on public.products for delete
-  using (exists (
-    select 1 from public.allowed_users au where au.user_id = auth.uid()
-  ));
+  using (
+    exists (select 1 from public.allowed_users au where au.user_id = auth.uid())
+    or user_id = auth.uid()
+  );
 
 -- 7. 본인이 허용 명단에 있는지 스스로 확인할 수 있도록 허용
 --    (allowed_users 자체는 관리자가 SQL Editor에서 직접 추가/삭제)
